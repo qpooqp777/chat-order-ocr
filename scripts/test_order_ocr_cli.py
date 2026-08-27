@@ -48,7 +48,13 @@ def main() -> int:
     assert adversarial_rows[("淑仔", "文旦100元")]["qty"] == 1, adversarial_rows
     assert adversarial_rows[("小強", "西瓜")]["qty"] == 1, adversarial_rows
     assert not any("🍎" in str(row["person"]) or "🎉" in str(row["person"]) for row in adversarial["rows"]), adversarial_rows
-    print("complex + inline + adversarial fixtures PASS", adversarial["summary"])
+    assert "需人工查驗" in adversarial_rows[("小強", "西瓜")]["備注"], adversarial_rows
+    assert "姓名與品項同列" in adversarial_rows[("小強", "西瓜")]["備注"], adversarial_rows
+    assert "需人工查驗" in adversarial_rows[("小美", "蘋果")]["備注"], adversarial_rows
+    assert "姓名含裝飾字元" in adversarial_rows[("小美", "蘋果")]["備注"], adversarial_rows
+    ocr = run("--input", str(ADVERSARIAL_FIXTURE), "--source", "ocr", "--format", "json")
+    assert all("需人工查驗" in row["備注"] and "OCR 來源" in row["備注"] for row in ocr["rows"]), ocr
+    print("complex + inline + adversarial + notes fixtures PASS", adversarial["summary"])
     return 0
 
 

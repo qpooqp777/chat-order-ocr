@@ -168,7 +168,19 @@ def parse_lines(text: str, source: str = "text", source_file: str | None = None,
         if not item:
             continue
         matched_item, match_status = match_catalog(item, catalog)
-        confidence = "check" if source == "ocr" or person == "未標註" or match_status == "未對應，請確認" or inline_split or person_needs_review else "high"
+        review_reasons: list[str] = []
+        if source == "ocr":
+            review_reasons.append("OCR 來源")
+        if person == "未標註":
+            review_reasons.append("未辨識訂購人")
+        if match_status == "未對應，請確認":
+            review_reasons.append("品項未對應")
+        if inline_split:
+            review_reasons.append("姓名與品項同列")
+        if person_needs_review:
+            review_reasons.append("姓名含裝飾字元")
+        confidence = "check" if review_reasons else "high"
+        note = "需人工查驗：" + "、".join(review_reasons) if review_reasons else ""
         rows.append({
             "person": person,
             "item": item,
@@ -178,6 +190,7 @@ def parse_lines(text: str, source: str = "text", source_file: str | None = None,
             "source": source,
             "source_file": source_file or "",
             "confidence": confidence,
+            "備注": note,
         })
     return rows
 
@@ -233,9 +246,9 @@ def make_summary(rows: list[dict[str, object]]) -> dict[str, object]:
 
 def write_csv(rows: list[dict[str, object]], stream: io.TextIOBase) -> None:
     writer = csv.writer(stream)
-    writer.writerow(["姓名", "原始品項", "對應品項", "數量", "來源", "來源檔案", "對應狀態", "信心"])
+    writer.writerow(["姓名", "原始品項", "對應品項", "數量", "來源", "來源檔案", "對應狀態", "信心", "備注"])
     for row in rows:
-        writer.writerow([row["person"], row["item"], row["matched_item"], row["qty"], row["source"], row["source_file"], row["match_status"], row["confidence"]])
+        writer.writerow([row["person"], row["item"], row["matched_item"], row["qty"], row["source"], row["source_file"], row["match_status"], row["confidence"], row["備注"]])
 
 
 def build_parser() -> argparse.ArgumentParser:
