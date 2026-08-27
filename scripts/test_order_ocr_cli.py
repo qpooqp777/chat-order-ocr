@@ -12,6 +12,7 @@ CLI = ROOT / "scripts" / "order_ocr_cli.py"
 FIXTURE = ROOT / "references" / "complex_chat_fixture.txt"
 CATALOG = ROOT / "references" / "catalog.example.json"
 INLINE_FIXTURE = ROOT / "references" / "multi_format_test_fixture.txt"
+ADVERSARIAL_FIXTURE = ROOT / "references" / "ocr_adversarial_fixture.txt"
 
 
 def run(*args: str) -> dict:
@@ -39,7 +40,15 @@ def main() -> int:
     assert by_person[("淑仔", "文旦")]["confidence"] == "check", by_person
     assert any(row["item"] == "櫻桃 2公斤" for row in inline["rows"]), by_person
     assert not any(row["person"] == "櫻桃" for row in inline["rows"]), by_person
-    print("complex + inline fixtures PASS", inline["summary"])
+
+    adversarial = run("--input", str(ADVERSARIAL_FIXTURE), "--source", "text", "--sort", "original", "--format", "json")
+    adversarial_rows = {(row["person"], row["item"]): row for row in adversarial["rows"]}
+    assert adversarial_rows[("小美", "蘋果")]["qty"] == 1, adversarial_rows
+    assert adversarial_rows[("王姐", "櫻桃 2公斤")]["qty"] == 1, adversarial_rows
+    assert adversarial_rows[("淑仔", "文旦100元")]["qty"] == 1, adversarial_rows
+    assert adversarial_rows[("小強", "西瓜")]["qty"] == 1, adversarial_rows
+    assert not any("🍎" in str(row["person"]) or "🎉" in str(row["person"]) for row in adversarial["rows"]), adversarial_rows
+    print("complex + inline + adversarial fixtures PASS", adversarial["summary"])
     return 0
 
 

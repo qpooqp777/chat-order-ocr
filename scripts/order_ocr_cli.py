@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -38,12 +39,29 @@ def normalize_line(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace("\u200b", "")).replace("•", "").strip(" \t-*·")
 
 
+def clean_person_candidate(line: str) -> str:
+    """Remove emoji/symbol decorations from a person candidate only."""
+    cleaned = "".join(char for char in line if unicodedata.category(char) not in {"So", "Sk", "Me"})
+    cleaned = re.sub(r"[\ufe0e\ufe0f\u200d]", "", cleaned)
+    cleaned = re.sub(r"^[\[【(（{][^\]】)）}]{1,8}[\]】)）}]\s*", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip(" \\t[]【】()（）{}")
+
+
+def clean_item_decorations(item: str) -> str:
+    """Remove decorative emoji at item edges while preserving the item text."""
+    item = item.strip()
+    item = re.sub(r"^[^\w\u3400-\u9fff]+", "", item, flags=re.UNICODE)
+    item = re.sub(r"[^\w\u3400-\u9fff]+$", "", item, flags=re.UNICODE)
+    return item.strip()
+
+
 def looks_like_person(line: str) -> bool:
-    if not 1 <= len(line) <= 12:
+    candidate = clean_person_candidate(line)
+    if not 1 <= len(candidate) <= 12:
         return False
-    if re.search(r"\d|[+＋:：/]|下午|上午|已讀|圖片|貼圖|回覆|公斤|粒|盒|包|斤|份|個", line):
+    if re.search(r"\d|[+＋:：/]|下午|上午|已讀|圖片|貼圖|回覆|公斤|粒|盒|包|斤|份|個", candidate):
         return False
-    return not re.fullmatch(r"[哈呵啊嗯喔哦笑]+", line)
+    return not re.fullmatch(r"[哈呵啊嗯喔哦笑]+", candidate)
 
 
 def inline_person_item(prefix: str) -> tuple[str, str] | None:
@@ -51,18 +69,30 @@ def inline_person_item(prefix: str) -> tuple[str, str] | None:
     prefix = prefix.strip(" \t，,。；;：:—–-")
     if not prefix:
         return None
-    # Measurement/packaging tokens belong to the item, not to a person's name.
-    if re.search(r"\d|公斤|公克|克|斤|粒|盒|包|袋|份|個", prefix):
-        return None
     # Explicit colon is the strongest same-line boundary: 姓名：品項。
     colon = re.match(r"^([^：:]{1,12})[：:]\s*(.+)$", prefix)
     if colon and looks_like_person(colon.group(1).strip()):
-        return colon.group(1).strip(), colon.group(2).strip()
+        return clean_person_candidate(colon.group(1)), colon.group(2).strip()
+    # Measurement/packaging tokens belong to the item, not to a person's name.
+    if re.search(r"\d|公斤|公克|克|斤|粒|盒|包|袋|份|個", prefix):
+        return None
     # Whitespace boundary: accept a compact name token before the item.
     space = re.match(r"^([^\s]{1,12})\s+(.+)$", prefix)
     if space and looks_like_person(space.group(1)):
-        return space.group(1), space.group(2).strip()
+        return clean_person_candidate(space.group(1)), space.group(2).strip()
     return None
+
+
+def coalesce_quantity_lines(text: str) -> list[str]:
+    """Join a quantity split across adjacent chat/OCR lines, e.g. `item+` + `1`."""
+    lines = [normalize_line(raw) for raw in text.splitlines()]
+    merged: list[str] = []
+    for line in lines:
+        if merged and re.search(r"(?:\+|＋)\s*$", merged[-1]) and re.fullmatch(r"[0-9０-９一二三四五六七八九十兩]+", line):
+            merged[-1] += line
+        else:
+            merged.append(line)
+    return merged
 
 
 def quantity_match(line: str) -> tuple[int, int, int] | None:
@@ -108,14 +138,21 @@ def parse_lines(text: str, source: str = "text", source_file: str | None = None,
     rows: list[dict[str, object]] = []
     current_person = "未標註"
     catalog = catalog or {}
-    for raw in text.splitlines():
-        line = normalize_line(raw)
+    person_needs_review = False
+    for line in coalesce_quantity_lines(text):
         if not line or re.fullmatch(r"(?:下午|上午)?\s*\d{1,2}:\d{2}", line) or re.fullmatch(r"\d{1,3}", line):
             continue
         match = quantity_match(line)
         if not match:
-            if looks_like_person(line):
-                current_person = line
+            pending_person = re.fullmatch(r"([^：:]{1,12})[：:]", line)
+            if pending_person and looks_like_person(pending_person.group(1)):
+                cleaned_person = clean_person_candidate(pending_person.group(1))
+                person_needs_review = cleaned_person != pending_person.group(1)
+                current_person = cleaned_person
+            elif looks_like_person(line):
+                cleaned_person = clean_person_candidate(line)
+                person_needs_review = cleaned_person != line
+                current_person = cleaned_person
             continue
         qty, start, length = match
         prefix = re.sub(r"[，,。；;：:—–-]\s*$", "", line[:start]).strip()
@@ -127,10 +164,11 @@ def parse_lines(text: str, source: str = "text", source_file: str | None = None,
             item = prefix
         if not item:
             item = (line[:start] + line[start + length:]).strip()
+        item = clean_item_decorations(item)
         if not item:
             continue
         matched_item, match_status = match_catalog(item, catalog)
-        confidence = "check" if source == "ocr" or person == "未標註" or match_status == "未對應，請確認" or inline_split else "high"
+        confidence = "check" if source == "ocr" or person == "未標註" or match_status == "未對應，請確認" or inline_split or person_needs_review else "high"
         rows.append({
             "person": person,
             "item": item,
