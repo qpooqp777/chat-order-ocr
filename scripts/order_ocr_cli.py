@@ -46,6 +46,25 @@ def looks_like_person(line: str) -> bool:
     return not re.fullmatch(r"[哈呵啊嗯喔哦笑]+", line)
 
 
+def inline_person_item(prefix: str) -> tuple[str, str] | None:
+    """Split a same-line person/item prefix without guessing arbitrary phrases."""
+    prefix = prefix.strip(" \t，,。；;：:—–-")
+    if not prefix:
+        return None
+    # Measurement/packaging tokens belong to the item, not to a person's name.
+    if re.search(r"\d|公斤|公克|克|斤|粒|盒|包|袋|份|個", prefix):
+        return None
+    # Explicit colon is the strongest same-line boundary: 姓名：品項。
+    colon = re.match(r"^([^：:]{1,12})[：:]\s*(.+)$", prefix)
+    if colon and looks_like_person(colon.group(1).strip()):
+        return colon.group(1).strip(), colon.group(2).strip()
+    # Whitespace boundary: accept a compact name token before the item.
+    space = re.match(r"^([^\s]{1,12})\s+(.+)$", prefix)
+    if space and looks_like_person(space.group(1)):
+        return space.group(1), space.group(2).strip()
+    return None
+
+
 def quantity_match(line: str) -> tuple[int, int, int] | None:
     plus = re.search(r"(?:\+|＋)\s*(\d+)", line)
     if plus:
@@ -99,15 +118,21 @@ def parse_lines(text: str, source: str = "text", source_file: str | None = None,
                 current_person = line
             continue
         qty, start, length = match
-        item = re.sub(r"[，,。；;：:—–-]\s*$", "", line[:start]).strip()
+        prefix = re.sub(r"[，,。；;：:—–-]\s*$", "", line[:start]).strip()
+        person = current_person
+        inline_split = inline_person_item(prefix)
+        if inline_split:
+            person, item = inline_split
+        else:
+            item = prefix
         if not item:
             item = (line[:start] + line[start + length:]).strip()
         if not item:
             continue
         matched_item, match_status = match_catalog(item, catalog)
-        confidence = "check" if source == "ocr" or current_person == "未標註" or match_status == "未對應，請確認" else "high"
+        confidence = "check" if source == "ocr" or person == "未標註" or match_status == "未對應，請確認" or inline_split else "high"
         rows.append({
-            "person": current_person,
+            "person": person,
             "item": item,
             "matched_item": matched_item,
             "match_status": match_status,

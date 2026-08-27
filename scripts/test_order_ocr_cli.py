@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "order_ocr_cli.py"
 FIXTURE = ROOT / "references" / "complex_chat_fixture.txt"
 CATALOG = ROOT / "references" / "catalog.example.json"
+INLINE_FIXTURE = ROOT / "references" / "multi_format_test_fixture.txt"
 
 
 def run(*args: str) -> dict:
@@ -29,7 +30,16 @@ def main() -> int:
     assert any(row["person"] == "小明" and row["matched_item"] == "紅肉火龍果大果" for row in payload["rows"])
     assert any(row["match_status"] == "未對應，請確認" for row in payload["rows"])
     assert all(row["confidence"] == "check" for row in payload["rows"] if row["match_status"] == "未對應，請確認")
-    print("complex fixture PASS", payload["summary"])
+
+    inline = run("--input", str(INLINE_FIXTURE), "--source", "text", "--sort", "original", "--format", "json")
+    by_person = {(row["person"], row["item"]): row for row in inline["rows"]}
+    assert by_person[("小強", "西瓜")]["qty"] == 1, by_person
+    assert by_person[("淑仔", "文旦")]["qty"] == 1, by_person
+    assert by_person[("小強", "西瓜")]["confidence"] == "check", by_person
+    assert by_person[("淑仔", "文旦")]["confidence"] == "check", by_person
+    assert any(row["item"] == "櫻桃 2公斤" for row in inline["rows"]), by_person
+    assert not any(row["person"] == "櫻桃" for row in inline["rows"]), by_person
+    print("complex + inline fixtures PASS", inline["summary"])
     return 0
 
 
